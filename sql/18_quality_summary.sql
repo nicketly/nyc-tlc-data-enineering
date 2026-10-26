@@ -1,11 +1,10 @@
 -- Compact, repeatable data-quality summary for the NYC TLC Yellow Taxi warehouse.
--- Run this script after loading raw data and refreshing dwh.fact_trips.
+-- Run after loading raw data and refreshing dwh.fact_trips.
 -- Read-only: this script does not modify source or warehouse tables.
 --
 -- Status meanings:
 -- PASS   = structural expectation is met
 -- REVIEW = an anomaly exists and should be investigated, not automatically deleted
--- INFO   = descriptive metric, not a failure condition
 
 WITH
 raw_stats AS (
@@ -30,6 +29,21 @@ fact_stats AS (
         COUNT(*) FILTER (WHERE has_missing_critical_fields)::BIGINT AS missing_critical_field_rows
     FROM dwh.fact_trips
 ),
+coverage_stats AS (
+    SELECT
+        (SELECT COUNT(*)::BIGINT
+         FROM raw.yellow_tripdata AS r
+         WHERE NOT EXISTS (
+             SELECT 1 FROM dwh.fact_trips AS f
+             WHERE f.raw_trip_record_id = r.trip_record_id
+         )) AS raw_rows_missing_from_fact,
+        (SELECT COUNT(*)::BIGINT
+         FROM dwh.fact_trips AS f
+         WHERE NOT EXISTS (
+             SELECT 1 FROM raw.yellow_tripdata AS r
+             WHERE r.trip_record_id = f.raw_trip_record_id
+         )) AS fact_rows_missing_from_raw
+),
 ratecode_mismatches AS (
     SELECT COUNT(*)::BIGINT AS mismatch_rows
     FROM dwh.fact_trips AS f
@@ -38,13 +52,8 @@ ratecode_mismatches AS (
     LEFT JOIN dwh.dim_ratecode AS d
         ON d.ratecode_key = f.ratecode_key
     WHERE d.ratecode_key IS NULL
-       OR (
-            r.RatecodeID IS NULL AND d.ratecode_id <> 0
-       )
-       OR (
-            r.RatecodeID IS NOT NULL
-            AND r.RatecodeID IS DISTINCT FROM d.ratecode_id
-       )
+       OR (r.RatecodeID IS NULL AND d.ratecode_id <> 0)
+       OR (r.RatecodeID IS NOT NULL AND r.RatecodeID IS DISTINCT FROM d.ratecode_id)
 ),
 metrics AS (
     SELECT
@@ -52,19 +61,33 @@ metrics AS (
         ABS(r.raw_rows - f.fact_rows)::BIGINT AS metric_value,
         NULLIF(r.raw_rows, 0)::BIGINT AS denominator,
         0::BIGINT AS allowed_value,
-        'PASS'::TEXT AS pass_status,
-        'INFO'::TEXT AS nonzero_status,
-        'Raw rows minus fact rows should be zero.'::TEXT AS interpretation
+        'Raw and fact row counts should match.'::TEXT AS interpretation
     FROM raw_stats AS r CROSS JOIN fact_stats AS f
 
     UNION ALL
     SELECT
-        'duplicate_or_missing_fact_trip_ids',
+        'raw_rows_missing_from_fact',
+        c.raw_rows_missing_from_fact,
+        NULLIF(r.raw_rows, 0),
+        0,
+        'Every raw trip should have a corresponding fact row.'
+    FROM coverage_stats AS c CROSS JOIN raw_stats AS r
+
+    UNION ALL
+    SELECT
+        'fact_rows_missing_from_raw',
+        c.fact_rows_missing_from_raw,
+        NULLIF(f.fact_rows, 0),
+        0,
+        'Every fact row should point to an existing raw trip.'
+    FROM coverage_stats AS c CROSS JOIN fact_stats AS f
+
+    UNION ALL
+    SELECT
+        'duplicate_fact_trip_ids',
         f.fact_rows - f.unique_fact_trip_ids,
         NULLIF(f.fact_rows, 0),
         0,
-        'PASS',
-        'REVIEW',
         'Fact rows should have unique raw_trip_record_id values.'
     FROM fact_stats AS f
 
@@ -74,8 +97,6 @@ metrics AS (
         f.rows_with_missing_dimension_keys,
         NULLIF(f.fact_rows, 0),
         0,
-        'PASS',
-        'REVIEW',
         'Every fact row should resolve to all required dimension members.'
     FROM fact_stats AS f
 
@@ -85,8 +106,6 @@ metrics AS (
         m.mismatch_rows,
         NULLIF(f.fact_rows, 0),
         0,
-        'PASS',
-        'REVIEW',
         'Source RatecodeID should match its dimension member; source NULL maps to ratecode_id 0.'
     FROM ratecode_mismatches AS m CROSS JOIN fact_stats AS f
 
@@ -96,8 +115,6 @@ metrics AS (
         f.negative_duration_rows,
         NULLIF(f.fact_rows, 0),
         0,
-        'PASS',
-        'REVIEW',
         'Investigate trips where drop-off precedes pick-up.'
     FROM fact_stats AS f
 
@@ -107,8 +124,6 @@ metrics AS (
         f.zero_distance_rows,
         NULLIF(f.fact_rows, 0),
         0,
-        'PASS',
-        'REVIEW',
         'Zero distance may reflect invalid data or special trip circumstances.'
     FROM fact_stats AS f
 
@@ -118,8 +133,6 @@ metrics AS (
         f.negative_fare_rows,
         NULLIF(f.fact_rows, 0),
         0,
-        'PASS',
-        'REVIEW',
         'Investigate negative fares before deciding how to treat them.'
     FROM fact_stats AS f
 
@@ -129,8 +142,6 @@ metrics AS (
         f.negative_total_rows,
         NULLIF(f.fact_rows, 0),
         0,
-        'PASS',
-        'REVIEW',
         'Investigate negative total amounts; do not automatically remove them.'
     FROM fact_stats AS f
 
@@ -140,8 +151,6 @@ metrics AS (
         f.missing_critical_field_rows,
         NULLIF(f.fact_rows, 0),
         0,
-        'PASS',
-        'REVIEW',
         'Critical-field completeness should be reviewed.'
     FROM fact_stats AS f
 )
@@ -150,15 +159,9 @@ SELECT
     metric_value,
     ROUND(100.0 * metric_value / NULLIF(denominator, 0), 4) AS pct_of_fact_rows,
     allowed_value,
-    CASE
-        WHEN metric_value <= allowed_value THEN pass_status
-        ELSE nonzero_status
-    END AS status,
+    CASE WHEN metric_value <= allowed_value THEN 'PASS' ELSE 'REVIEW' END AS status,
     interpretation
 FROM metrics
 ORDER BY
-    CASE
-        WHEN metric_value > allowed_value THEN 0
-        ELSE 1
-    END,
+    CASE WHEN metric_value > allowed_value THEN 0 ELSE 1 END,
     metric_name;
