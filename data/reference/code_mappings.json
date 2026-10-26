@@ -13,7 +13,7 @@
     "4": "Nassau or Westchester",
     "5": "Negotiated fare",
     "6": "Group ride",
-    "99": "Null/unknown"
+    "99": "Unknown rate"
   },
   "payment_type": {
     "0": "Flex Fare trip",
