@@ -65,99 +65,69 @@ metrics AS (
     FROM raw_stats AS r CROSS JOIN fact_stats AS f
 
     UNION ALL
-    SELECT
-        'raw_rows_missing_from_fact',
-        c.raw_rows_missing_from_fact,
-        NULLIF(r.raw_rows, 0),
-        0,
-        'Every raw trip should have a corresponding fact row.'
+    SELECT 'raw_rows_missing_from_fact', c.raw_rows_missing_from_fact,
+           NULLIF(r.raw_rows, 0), 0,
+           'Every raw trip should have a corresponding fact row.'
     FROM coverage_stats AS c CROSS JOIN raw_stats AS r
 
     UNION ALL
-    SELECT
-        'fact_rows_missing_from_raw',
-        c.fact_rows_missing_from_raw,
-        NULLIF(f.fact_rows, 0),
-        0,
-        'Every fact row should point to an existing raw trip.'
+    SELECT 'fact_rows_missing_from_raw', c.fact_rows_missing_from_raw,
+           NULLIF(f.fact_rows, 0), 0,
+           'Every fact row should point to an existing raw trip.'
     FROM coverage_stats AS c CROSS JOIN fact_stats AS f
 
     UNION ALL
-    SELECT
-        'duplicate_fact_trip_ids',
-        f.fact_rows - f.unique_fact_trip_ids,
-        NULLIF(f.fact_rows, 0),
-        0,
-        'Fact rows should have unique raw_trip_record_id values.'
+    SELECT 'duplicate_fact_trip_ids', f.fact_rows - f.unique_fact_trip_ids,
+           NULLIF(f.fact_rows, 0), 0,
+           'Fact rows should have unique raw_trip_record_id values.'
     FROM fact_stats AS f
 
     UNION ALL
-    SELECT
-        'rows_with_missing_dimension_keys',
-        f.rows_with_missing_dimension_keys,
-        NULLIF(f.fact_rows, 0),
-        0,
-        'Every fact row should resolve to all required dimension members.'
+    SELECT 'rows_with_missing_dimension_keys', f.rows_with_missing_dimension_keys,
+           NULLIF(f.fact_rows, 0), 0,
+           'Every fact row should resolve to all required dimension members.'
     FROM fact_stats AS f
 
     UNION ALL
-    SELECT
-        'ratecode_source_mapping_mismatches',
-        m.mismatch_rows,
-        NULLIF(f.fact_rows, 0),
-        0,
-        'Source RatecodeID should match its dimension member; source NULL maps to ratecode_id 0.'
+    SELECT 'ratecode_source_mapping_mismatches', m.mismatch_rows,
+           NULLIF(f.fact_rows, 0), 0,
+           'Source RatecodeID should match its dimension member; source NULL maps to ratecode_id 0.'
     FROM ratecode_mismatches AS m CROSS JOIN fact_stats AS f
 
     UNION ALL
-    SELECT
-        'negative_duration_rows',
-        f.negative_duration_rows,
-        NULLIF(f.fact_rows, 0),
-        0,
-        'Investigate trips where drop-off precedes pick-up.'
+    SELECT 'negative_duration_rows', f.negative_duration_rows,
+           NULLIF(f.fact_rows, 0), 0,
+           'Investigate trips where drop-off precedes pick-up.'
     FROM fact_stats AS f
 
     UNION ALL
-    SELECT
-        'zero_distance_rows',
-        f.zero_distance_rows,
-        NULLIF(f.fact_rows, 0),
-        0,
-        'Zero distance may reflect invalid data or special trip circumstances.'
+    SELECT 'zero_distance_rows', f.zero_distance_rows,
+           NULLIF(f.fact_rows, 0), 0,
+           'Zero distance may reflect invalid data or special trip circumstances.'
     FROM fact_stats AS f
 
     UNION ALL
-    SELECT
-        'negative_fare_rows',
-        f.negative_fare_rows,
-        NULLIF(f.fact_rows, 0),
-        0,
-        'Investigate negative fares before deciding how to treat them.'
+    SELECT 'negative_fare_rows', f.negative_fare_rows,
+           NULLIF(f.fact_rows, 0), 0,
+           'Investigate negative fares before deciding how to treat them.'
     FROM fact_stats AS f
 
     UNION ALL
-    SELECT
-        'negative_total_amount_rows',
-        f.negative_total_rows,
-        NULLIF(f.fact_rows, 0),
-        0,
-        'Investigate negative total amounts; do not automatically remove them.'
+    SELECT 'negative_total_amount_rows', f.negative_total_rows,
+           NULLIF(f.fact_rows, 0), 0,
+           'Investigate negative total amounts; do not automatically remove them.'
     FROM fact_stats AS f
 
     UNION ALL
-    SELECT
-        'rows_with_missing_critical_fields',
-        f.missing_critical_field_rows,
-        NULLIF(f.fact_rows, 0),
-        0,
-        'Critical-field completeness should be reviewed.'
+    SELECT 'rows_with_missing_critical_fields', f.missing_critical_field_rows,
+           NULLIF(f.fact_rows, 0), 0,
+           'Critical-field completeness should be reviewed.'
     FROM fact_stats AS f
 )
 SELECT
     metric_name,
     metric_value,
-    ROUND(100.0 * metric_value / NULLIF(denominator, 0), 4) AS pct_of_fact_rows,
+    ROUND(100.0 * metric_value / NULLIF(denominator, 0), 4) AS pct_of_denominator,
     allowed_value,
     CASE WHEN metric_value <= allowed_value THEN 'PASS' ELSE 'REVIEW' END AS status,
     interpretation
