@@ -14,4 +14,18 @@ CREATE TABLE IF NOT EXISTS dwh.dim_ratecode (
     ratecode_description TEXT
 );
 
+-- Stable dimension member for trips whose source RatecodeID is NULL.
+-- Key 0 is reserved so missing source values can still have a valid FK.
+INSERT INTO dwh.dim_ratecode (
+    ratecode_key,
+    ratecode_id,
+    ratecode_description
+)
+OVERRIDING SYSTEM VALUE
+VALUES (0, 0, 'Null/missing')
+ON CONFLICT (ratecode_id) DO UPDATE
+SET ratecode_description = EXCLUDED.ratecode_description
+WHERE dwh.dim_ratecode.ratecode_description
+    IS DISTINCT FROM EXCLUDED.ratecode_description;
+
 COMMIT;
