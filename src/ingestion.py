@@ -1,121 +1,148 @@
-import psycopg
-from pathlib import Path
-import pandas as pd
-from datetime import datetime, timezone
 
-CURRENT_DIR = Path.cwd()
-DATA_DIR = CURRENT_DIR / "data"
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pandas as pd
+import psycopg
+from dotenv import load_dotenv
+
+
+PROJECT_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = PROJECT_DIR / "data"
+
+load_dotenv(PROJECT_DIR / ".env")
+
+COLUMNS = [
+    "VendorID",
+    "tpep_pickup_datetime",
+    "tpep_dropoff_datetime",
+    "passenger_count",
+    "trip_distance",
+    "RatecodeID",
+    "store_and_fwd_flag",
+    "PULocationID",
+    "DOLocationID",
+    "payment_type",
+    "fare_amount",
+    "extra",
+    "mta_tax",
+    "tip_amount",
+    "tolls_amount",
+    "improvement_surcharge",
+    "total_amount",
+    "congestion_surcharge",
+    "Airport_fee",
+    "cbd_congestion_fee",
+    "loaded_at",
+    "source_file",
+]
+
+INTEGER_COLUMNS = [
+    "VendorID",
+    "passenger_count",
+    "RatecodeID",
+    "PULocationID",
+    "DOLocationID",
+    "payment_type",
+]
+
+NUMERIC_COLUMNS = [
+    "trip_distance",
+    "fare_amount",
+    "extra",
+    "mta_tax",
+    "tip_amount",
+    "tolls_amount",
+    "improvement_surcharge",
+    "total_amount",
+    "congestion_surcharge",
+    "Airport_fee",
+    "cbd_congestion_fee",
+]
+
+DATETIME_COLUMNS = [
+    "tpep_pickup_datetime",
+    "tpep_dropoff_datetime",
+]
+
 
 def get_connection():
-    conn = psycopg.connect(
-        dbname = 'yellow_tripdata_DB',
-        user = 'postgres',
-        password = '***REMOVED***',
-        host = 'localhost',
-        port = '5432'
-    )
+    required = [
+        "DATABASE_NAME",
+        "DATABASE_USER",
+        "DATABASE_PASSWORD",
+        "HOST",
+        "PORT",
+    ]
+    missing = [key for key in required if not os.getenv(key)]
+    if missing:
+        raise ValueError(
+            f"Missing environment variables: {', '.join(missing)}"
+        )
 
-    return conn
+    return psycopg.connect(
+        dbname=os.environ["DATABASE_NAME"],
+        user=os.environ["DATABASE_USER"],
+        password=os.environ["DATABASE_PASSWORD"],
+        host=os.environ["HOST"],
+        port=os.environ["PORT"],
+    )
 
 
 def is_already_loaded(conn, source_file):
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT 1
-            FROM raw.ingestion_log
-            WHERE source_file = %s
-              AND status = 'success';
+            SELECT EXISTS (
+                SELECT 1
+                FROM raw.ingestion_log
+                WHERE source_file = %s
+                  AND status = 'success'
+            );
             """,
-            (source_file,)
+            (source_file,),
         )
+        return cur.fetchone()[0]
 
-        result = cur.fetchone()
-
-        return result is not None
 
 def normalize_types(df):
-    # Integer columns
-    integer_columns = [
-        "VendorID",
-        "passenger_count",
-        "RatecodeID",
-        "PULocationID",
-        "DOLocationID",
-        "payment_type"
-    ]
+    df = df.copy()
 
-    for column in integer_columns:
+    for column in INTEGER_COLUMNS:
         df[column] = df[column].astype("Int16")
 
-    # Numeric columns
-    numeric_columns = [
-        "trip_distance",
-        "fare_amount",
-        "extra",
-        "mta_tax",
-        "tip_amount",
-        "tolls_amount",
-        "improvement_surcharge",
-        "total_amount",
-        "congestion_surcharge",
-        "Airport_fee",
-        "cbd_congestion_fee"
-    ]
+    for column in NUMERIC_COLUMNS:
+        df[column] = pd.to_numeric(df[column], errors="raise").round(2)
 
-    for column in numeric_columns:
-        df[column] = df[column].round(2)
-
-    # String columns
     df["store_and_fwd_flag"] = df["store_and_fwd_flag"].astype("string")
 
-    # Datetime columns
-    datetime_columns = [
-        "tpep_pickup_datetime",
-        "tpep_dropoff_datetime"
-    ]
+    for column in DATETIME_COLUMNS:
+        df[column] = pd.to_datetime(df[column], errors="raise")
 
-    for column in datetime_columns:
-        df[column] = pd.to_datetime(df[column])
+    # Convert pandas missing values (pd.NA, NaN, NaT) to Python None,
+    # which psycopg can insert as SQL NULL
+    df = df.astype(object).where(pd.notna(df), None)
 
     return df
 
-def load_parquet(conn, file_path):
+
+def load_parquet(conn, file_path, loaded_at):
     df = pd.read_parquet(file_path)
 
-    loaded_at = datetime.now(timezone.utc)
-    source_file = file_path.name.split("/")[-1]
+    missing_columns = set(COLUMNS) - {
+        "loaded_at",
+        "source_file",
+    } - set(df.columns)
+
+    if missing_columns:
+        raise ValueError(
+            f"Parquet file is missing columns: {sorted(missing_columns)}"
+        )
 
     df["loaded_at"] = loaded_at
-    df["source_file"] = source_file
-
-    columns = [
-        "VendorID",
-        "tpep_pickup_datetime",
-        "tpep_dropoff_datetime",
-        "passenger_count",
-        "trip_distance",
-        "RatecodeID",
-        "store_and_fwd_flag",
-        "PULocationID",
-        "DOLocationID",
-        "payment_type",
-        "fare_amount",
-        "extra",
-        "mta_tax",
-        "tip_amount",
-        "tolls_amount",
-        "improvement_surcharge",
-        "total_amount",
-        "congestion_surcharge",
-        "Airport_fee",
-        "cbd_congestion_fee",
-        "loaded_at",
-        "source_file"
-    ]
-
-    df = df[columns]
-    df = normalize_types(df)
+    df["source_file"] = file_path.name
+    df = normalize_types(df[COLUMNS])
 
     with conn.cursor() as cur:
         with cur.copy(
@@ -147,30 +174,69 @@ def load_parquet(conn, file_path):
             FROM STDIN
             """
         ) as copy:
-
-            for row in df.head(5).itertuples(index=False, name=None):
+            for row in df.itertuples(index=False, name=None):
                 copy.write_row(row)
 
-    conn.commit()
+    return len(df)
 
-    return 5
 
 def log_success(conn, source_file, loaded_at, row_count):
-    ...
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO raw.ingestion_log
+                (source_file, loaded_at, row_count, status)
+            VALUES (%s, %s, %s, 'success');
+            """,
+            (source_file, loaded_at, row_count),
+        )
+
+
+def log_failure(source_file, loaded_at):
+    # Use a separate transaction so a failed data load can be rolled back
+    # without also losing its failure record.
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO raw.ingestion_log
+                    (source_file, loaded_at, row_count, status)
+                VALUES (%s, %s, NULL, 'failed');
+                """,
+                (source_file, loaded_at),
+            )
+
 
 def main():
-    conn = get_connection()
     file_path = DATA_DIR / "yellow_tripdata_2026-01.parquet"
+
+    if not file_path.is_file():
+        raise FileNotFoundError(f"Parquet file not found: {file_path}")
+
     source_file = file_path.name
+    loaded_at = datetime.now(timezone.utc)
 
-    if is_already_loaded(conn, source_file):
-        print("File already loaded")
-        conn.close()
-        return
+    try:
+        # The connection context commits on success and rolls back on error
+        # It also closes the connection
+        with get_connection() as conn:
+            if is_already_loaded(conn, source_file):
+                print(f"File already loaded: {source_file}")
+                return
 
-    load_parquet(conn, file_path)
+            row_count = load_parquet(conn, file_path, loaded_at)
+            log_success(conn, source_file, loaded_at, row_count)
 
-    conn.close()
+        print(f"Successfully loaded {row_count:,} rows from {source_file}")
+
+    except Exception:
+        try:
+            log_failure(source_file, loaded_at)
+        except Exception as log_error:
+            print(f"Could not record ingestion failure: {log_error}")
+
+        raise
+
 
 if __name__ == "__main__":
     main()
