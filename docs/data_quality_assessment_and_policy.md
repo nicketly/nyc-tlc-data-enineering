@@ -51,7 +51,7 @@ Zero distance occurs in multiple payment types. Many Flex Fare records with zero
 
 ### Extreme elapsed durations
 
-The extreme-negative-amount sample includes records whose pickup-to-drop-off elapsed time exceeds 24 hours. This is a candidate for a separate quality flag and further profiling, not an established universal invalidity threshold. Do not cap or rewrite durations without additional evidence and a documented analytical requirement.
+The full duration profile found 3,283 trips over 3 hours (0.0461%), 1,714 over 12 hours (0.0241%), and 72 over 24 hours (0.0010%). The maximum observed duration is 9,265.15 minutes, approximately 154.4 hours or 6.4 days. These records are rare, but may distort duration averages and distributions. The thresholds are investigation flags, not proof that a trip is invalid. Retain source records, and compare duration metrics with and without flagged extreme-duration records before adopting an analytical exclusion. Do not cap or rewrite durations without additional evidence and a documented analytical requirement.
 
 ## Recommended analytical conventions
 
