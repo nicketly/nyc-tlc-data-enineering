@@ -96,3 +96,15 @@ For the currently loaded January–February 2026 dataset:
 - No missing date, vendor, payment-type, rate-code, or location dimension keys were detected.
 
 These are results for the current dataset, not permanent guarantees. Rerun the validation script after new data is ingested.
+
+### Run the warehouse pipeline with Python
+
+Once raw ingestion and the initial schema/reference-table setup are complete, run the warehouse pipeline from the project root:
+
+```bash
+python src/run_pipeline.py
+```
+
+The runner executes the warehouse SQL steps in dependency order, then runs `sql/20_validate_pipeline_integrity.sql` and checks the returned metrics. It exits with status code `0` when all required checks pass and a non-zero status when a SQL step or integrity check fails. Logs identify the step and report validation metrics.
+
+The runner deliberately does **not** call `src/ingestion.py`: raw Parquet ingestion remains a separate operation, and the runner does not truncate or rewrite the raw layer. It does full-refresh staging from the current raw table. The SQL files retain their own transaction boundaries.
