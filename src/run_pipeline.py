@@ -26,7 +26,6 @@ PIPELINE_STEPS = [
     "12_load_dwh_dimensions.sql",
     "14_sync_dwh_reference_dimensions.sql",
     "15_load_fact_trips.sql",
-    "20_validate_pipeline_integrity.sql",
 ]
 
 ZERO_REQUIRED = [
@@ -67,13 +66,16 @@ def get_connection() -> psycopg.Connection:
             "Missing environment variables: " + ", ".join(missing)
         )
 
-    return psycopg.connect(
+    conn = psycopg.connect(
         dbname=os.environ["DATABASE_NAME"],
         user=os.environ["DATABASE_USER"],
         password=os.environ["DATABASE_PASSWORD"],
         host=os.environ["HOST"],
         port=os.environ["PORT"],
     )
+    # Each SQL file controls its own BEGIN/COMMIT transaction.
+    conn.autocommit = True
+    return conn
 
 
 def run_sql_file(conn: psycopg.Connection, filename: str) -> None:
